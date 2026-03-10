@@ -2,16 +2,16 @@ import pandas as pd
 import pyarrow as pa
 import pytest
 
-from autoschema.io import to_arrow_table
-from autoschema.schema import (
+from autoschema.converters import to_arrow_table
+from autoschema.schema import infer_schema
+from autoschema.transforms import (
     cast_to_fixed_binary,
-    infer_schema,
     map_to_vocabulary,
     strings_to_fixed_size_binary,
 )
 
 
-def test_map_to_vocabulary():
+def test_map_to_vocabulary() -> None:
     df = pd.DataFrame({"kmer": ["AAAA", "CCCC", "GGGG", "TTTT", "Unknown"]})
     table = to_arrow_table(df)
     vocabulary = ["AAAA", "CCCC", "GGGG", "TTTT"]
@@ -31,7 +31,7 @@ def test_map_to_vocabulary():
     result = mapped_table.column("kmer").to_pylist()
     assert result == ["AAAA", "CCCC", "GGGG", "TTTT", None]
 
-def test_map_to_vocabulary_large():
+def test_map_to_vocabulary_large() -> None:
     # Vocabulary size > 255 should use uint16
     vocabulary = [str(i) for i in range(300)]
     df = pd.DataFrame({"col": ["0", "299"]})
@@ -41,7 +41,7 @@ def test_map_to_vocabulary_large():
     field = mapped_table.schema.field("col")
     assert field.type.index_type == pa.uint16()
 
-def test_cast_to_fixed_binary():
+def test_cast_to_fixed_binary() -> None:
     df = pd.DataFrame({"kmer": ["AAAA", "CCCC", "GGGG"]})
     table = to_arrow_table(df)
 
@@ -53,7 +53,7 @@ def test_cast_to_fixed_binary():
     assert pa.types.is_fixed_size_binary(field.type)
     assert field.type.byte_width == 4
 
-def test_cast_to_fixed_binary_error():
+def test_cast_to_fixed_binary_error() -> None:
     # Non-uniform length should raise ValueError
     df = pd.DataFrame({"kmer": ["AAAA", "CCC"]})
     table = to_arrow_table(df)
@@ -61,7 +61,7 @@ def test_cast_to_fixed_binary_error():
     with pytest.raises(ValueError, match="requires uniform length"):
         cast_to_fixed_binary(table, "kmer")
 
-def test_strings_to_fixed_size_binary():
+def test_strings_to_fixed_size_binary() -> None:
     df = pd.DataFrame({
         "kmer": ["AAAA", "CCCC"],
         "other": ["X", "Y"],
@@ -75,7 +75,7 @@ def test_strings_to_fixed_size_binary():
     assert pa.types.is_fixed_size_binary(optimized_table.schema.field("other").type)
     assert not pa.types.is_fixed_size_binary(optimized_table.schema.field("mixed").type)
 
-def test_infer_schema_dictionary_downcast():
+def test_infer_schema_dictionary_downcast() -> None:
     # Test that infer_schema downcasts dictionary indices
     # Create a dictionary array with int32 indices but small dictionary
     indices = pa.array([0, 1], type=pa.int32())

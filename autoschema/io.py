@@ -1,58 +1,58 @@
-from typing import Any, Optional
+from enum import Enum
+from typing import Any, Optional, Union
 
-import pyarrow as pa
 import pyarrow.parquet as pq
+
+from . import constants
+from .converters import to_arrow_table
+from .schema import infer_schema
 
 try:
     import pandas as pd
 except ImportError:
-    pd = None
-
-try:
-    import polars as pl
-except ImportError:
-    pl = None
+    pd = None  # type: ignore
 
 
-def to_arrow_table(data: Any) -> "pa.Table":
-    """Converts various dataframe types to a PyArrow Table."""
-    if isinstance(data, pa.Table):
-        return data
+class CompressionType(str, Enum):
+    """Supported Parquet compression types."""
 
-    # Check for pandas
-    if "pandas" in str(type(data)):
-        if pd is None:
-            raise ImportError(
-                "pandas is not installed but a pandas object was passed. "
-                "Please install pandas to use this functionality."
-            )
-        if isinstance(data, pd.DataFrame):
-            return pa.Table.from_pandas(data)
+    NONE = "NONE"
+    SNAPPY = "SNAPPY"
+    GZIP = "GZIP"
+    LZO = "LZO"
+    BROTLI = "BROTLI"
+    LZ4 = "LZ4"
+    ZSTD = "ZSTD"
 
-    # Check for polars
-    if "polars" in str(type(data)):
-        if pl is None:
-            raise ImportError(
-                "polars is not installed but a polars object was passed. "
-                "Please install polars to use this functionality."
-            )
-        if isinstance(data, pl.DataFrame):
-            return data.to_arrow()
-
-    # Check for cudf or other objects with to_arrow
-    if hasattr(data, "to_arrow"):
-        return data.to_arrow()
-
-    raise ValueError(f"Unsupported data type: {type(data)}")
+    @classmethod
+    def is_valid(cls, value: str) -> bool:
+        return value.upper() in cls._member_names_
 
 
 def write_parquet(
-    data: Any, path: str, header: Optional[dict[str, str]] = None, **kwargs: Any
+    data: Any,
+    path: str,
+    header: Optional[dict[str, str]] = None,
+    compression: Union[str, CompressionType] = constants.DEFAULT_COMPRESSION,
+    compression_level: Optional[int] = constants.DEFAULT_COMPRESSION_LEVEL,
+    use_parquet_dictionary_compression: bool = True,
+    data_page_size: int = constants.DEFAULT_PAGE_SIZE,
+    **kwargs: Any,
 ) -> None:
     """
     Writes data to a Parquet file with an optimized schema and custom header.
     """
-    from .schema import infer_schema
+    # Validate compression type
+    comp_str = (
+        compression.value
+        if isinstance(compression, CompressionType)
+        else str(compression).upper()
+    )
+    if not CompressionType.is_valid(comp_str):
+        valid_types = ", ".join(CompressionType._member_names_)
+        raise ValueError(
+            f"Invalid compression type: {compression}. Valid types are: {valid_types}"
+        )
 
     table = to_arrow_table(data)
     optimized_schema = infer_schema(table)
@@ -63,17 +63,24 @@ def write_parquet(
     # Add header metadata
     if header:
         existing_metadata = optimized_schema.metadata or {}
-        # Parquet metadata keys and values must be bytes
         new_metadata = {**existing_metadata}
         for k, v in header.items():
             new_metadata[k.encode("utf-8")] = str(v).encode("utf-8")
 
         table = table.replace_schema_metadata(new_metadata)
 
-    pq.write_table(table, path, **kwargs)
+    pq.write_table(
+        table,
+        path,
+        compression=comp_str,
+        compression_level=compression_level,
+        use_dictionary=use_parquet_dictionary_compression,
+        data_page_size=data_page_size,
+        **kwargs,
+    )
 
 
-def read_parquet(path: str) -> tuple["pd.DataFrame", dict[str, str]]:
+def read_parquet(path: str) -> tuple[Any, dict[str, str]]:
     """
     Reads a Parquet file and returns the data and the custom header metadata.
     """

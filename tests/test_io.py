@@ -77,7 +77,7 @@ def test_io_with_polars(tmp_path: pathlib.Path) -> None:
     assert isinstance(df_read, pd.DataFrame)
     assert len(df_read) == 3
 
-def test_io_unsupported_type():
+def test_io_unsupported_type() -> None:
     with pytest.raises(ValueError, match="Unsupported data type"):
         write_parquet([1, 2, 3], "test.parquet")
 

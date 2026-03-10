@@ -91,7 +91,7 @@ For bioinformatics and large-scale kmer analysis, AutoSchema provides tools to e
 If your kmers have a uniform length, you can manually cast a specific column to `FixedSizeBinary`. This removes the 4-byte-per-row offset overhead of standard strings, saving significant space and improving scan speed in R and Python.
 
 ```python
-from autoschema.schema import cast_to_fixed_binary
+from autoschema import cast_to_fixed_binary
 
 table = autoschema.to_arrow_table(df)
 table = cast_to_fixed_binary(table, "kmer")
@@ -104,7 +104,7 @@ When working with sparse kmer data across multiple files, you can use `map_to_vo
 import pandas as pd
 import autoschema
 import itertools
-from autoschema.schema import map_to_vocabulary
+from autoschema import map_to_vocabulary
 
 # 1. Generate a stable vocabulary of all possible 4-mers (256 total)
 # This ensures "AAAA" is always ID 0, "AAAC" is always ID 1, etc.
