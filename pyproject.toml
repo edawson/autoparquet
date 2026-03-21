@@ -11,9 +11,9 @@ authors = [
 description = "Automatically generate optimized Parquet/Arrow schemas for better compression."
 readme = "README.md"
 requires-python = ">=3.9"
+license = { text = "MIT" }
 classifiers = [
     "Programming Language :: Python :: 3",
-    "License :: OSI Approved :: MIT License",
     "Operating System :: OS Independent",
     "Development Status :: 4 - Beta",
     "Intended Audience :: Developers",
@@ -24,6 +24,10 @@ dependencies = [
     "pandas>=2.0.0",
     "numpy>=1.24.0",
 ]
+
+[tool.setuptools.packages.find]
+include = ["autoschema*"]
+exclude = ["tests*", "asc*"]
 
 [project.optional-dependencies]
 polars = ["polars>=0.20.0"]
