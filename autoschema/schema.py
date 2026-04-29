@@ -96,6 +96,18 @@ def infer_schema(table: pa.Table) -> pa.Schema:
             ):
                 new_type = pa.dictionary(pa.int32(), value_type)
 
+        # Boolean optimization (Ensure bit-packed)
+        elif pa.types.is_boolean(dtype):
+            new_type = pa.bool_()
+
+        # Timestamp optimization (Downcast precision if possible)
+        elif pa.types.is_timestamp(dtype):
+            # If it's nanoseconds, consider if we can downcast to microseconds or milliseconds
+            # for better compatibility and potentially smaller storage in some contexts.
+            # For Parquet, it doesn't change much but helps with R/other engine compatibility.
+            if dtype.unit == "ns":
+                new_type = pa.timestamp("us", tz=dtype.tz)
+
         fields.append(
             pa.field(name, new_type, nullable=table.schema.field(i).nullable)
         )
