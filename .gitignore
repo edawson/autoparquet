@@ -153,5 +153,7 @@ Thumbs.db
 
 # Project specific
 *.parquet
+*.feather
 *.arrow
+*.csv
 data/

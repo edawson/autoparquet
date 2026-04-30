@@ -27,7 +27,7 @@ format:
 	ruff format .
 
 check:
-	mypy autoschema tests
+	mypy src/autoparquet tests
 
 clean:
 	rm -rf build/

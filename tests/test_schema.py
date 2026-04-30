@@ -2,10 +2,11 @@ import pandas as pd
 import pyarrow as pa
 import pytest
 
-from autoschema.converters import to_arrow_table
-from autoschema.schema import infer_schema
-from autoschema.transforms import (
+from autoparquet.converters import to_arrow_table
+from autoparquet.schema import infer_schema
+from autoparquet.transforms import (
     cast_to_fixed_binary,
+    extract_string_vocabulary,
     map_to_vocabulary,
     strings_to_fixed_size_binary,
 )
@@ -31,6 +32,7 @@ def test_map_to_vocabulary() -> None:
     result = mapped_table.column("kmer").to_pylist()
     assert result == ["AAAA", "CCCC", "GGGG", "TTTT", None]
 
+
 def test_map_to_vocabulary_large() -> None:
     # Vocabulary size > 255 should use uint16
     vocabulary = [str(i) for i in range(300)]
@@ -40,6 +42,7 @@ def test_map_to_vocabulary_large() -> None:
     mapped_table = map_to_vocabulary(table, "col", vocabulary)
     field = mapped_table.schema.field("col")
     assert field.type.index_type == pa.uint16()
+
 
 def test_cast_to_fixed_binary() -> None:
     df = pd.DataFrame({"kmer": ["AAAA", "CCCC", "GGGG"]})
@@ -53,6 +56,7 @@ def test_cast_to_fixed_binary() -> None:
     assert pa.types.is_fixed_size_binary(field.type)
     assert field.type.byte_width == 4
 
+
 def test_cast_to_fixed_binary_error() -> None:
     # Non-uniform length should raise ValueError
     df = pd.DataFrame({"kmer": ["AAAA", "CCC"]})
@@ -61,12 +65,11 @@ def test_cast_to_fixed_binary_error() -> None:
     with pytest.raises(ValueError, match="requires uniform length"):
         cast_to_fixed_binary(table, "kmer")
 
+
 def test_strings_to_fixed_size_binary() -> None:
-    df = pd.DataFrame({
-        "kmer": ["AAAA", "CCCC"],
-        "other": ["X", "Y"],
-        "mixed": ["A", "BB"]
-    })
+    df = pd.DataFrame(
+        {"kmer": ["AAAA", "CCCC"], "other": ["X", "Y"], "mixed": ["A", "BB"]}
+    )
     table = to_arrow_table(df)
 
     optimized_table = strings_to_fixed_size_binary(table)
@@ -74,6 +77,7 @@ def test_strings_to_fixed_size_binary() -> None:
     assert pa.types.is_fixed_size_binary(optimized_table.schema.field("kmer").type)
     assert pa.types.is_fixed_size_binary(optimized_table.schema.field("other").type)
     assert not pa.types.is_fixed_size_binary(optimized_table.schema.field("mixed").type)
+
 
 def test_infer_schema_dictionary_downcast() -> None:
     # Test that infer_schema downcasts dictionary indices
@@ -85,3 +89,45 @@ def test_infer_schema_dictionary_downcast() -> None:
 
     schema = infer_schema(table)
     assert schema.field("col").type.index_type == pa.uint8()
+
+
+def test_extract_string_vocabulary() -> None:
+    # Test extracting and indexing a string column
+    df = pd.DataFrame({
+        "chromosome": ["chr1", "chr2", "chr10", "chr1", "chrX", "chr2"]
+    })
+    table = to_arrow_table(df)
+
+    # Extract vocabulary
+    indexed_table, vocab = extract_string_vocabulary(table, "chromosome")
+
+    # Check vocabulary is sorted
+    assert vocab == ["chr1", "chr10", "chr2", "chrX"]
+
+    # Check column is now dictionary-encoded
+    field = indexed_table.schema.field("chromosome")
+    assert pa.types.is_dictionary(field.type)
+
+    # Check index type is uint8 (4 unique values)
+    assert field.type.index_type == pa.uint8()
+
+    # Check indices directly (accessing the underlying DictionaryArray)
+    dict_array = indexed_table.column("chromosome").chunks[0]
+    indices = dict_array.indices.to_pylist()
+    assert indices == [0, 2, 1, 0, 3, 2]  # Indices into sorted vocab
+
+
+def test_extract_string_vocabulary_many_unique() -> None:
+    # Test with many unique values (> 255)
+    values = [f"name_{i:04d}" for i in range(500)]
+    df = pd.DataFrame({"name": values})
+    table = to_arrow_table(df)
+
+    indexed_table, vocab = extract_string_vocabulary(table, "name")
+
+    # Should have 500 unique values
+    assert len(vocab) == 500
+
+    # Index type should be uint16 (since 500 > 255)
+    field = indexed_table.schema.field("name")
+    assert field.type.index_type == pa.uint16()

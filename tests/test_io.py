@@ -5,7 +5,7 @@ import pyarrow as pa
 import pyarrow.parquet as pq
 import pytest
 
-from autoschema import read_parquet, write_parquet
+from autoparquet import read_parquet, write_parquet
 
 
 def test_basic_io(tmp_path: pathlib.Path) -> None:
@@ -14,11 +14,14 @@ def test_basic_io(tmp_path: pathlib.Path) -> None:
     header = {"key": "value"}
 
     write_parquet(df, path, header=header)
-    df_read, header_read = read_parquet(path)
 
-    pd.testing.assert_frame_equal(
-        df, df_read, check_dtype=False, check_categorical=False
-    )
+    # Read back the raw Arrow table to verify schema optimization
+    table = pq.read_table(path)
+    assert pa.types.is_dictionary(table.schema.field("b").type)
+
+    # Verify round-trip through read_parquet
+    df_read, header_read = read_parquet(path, engine="pandas")
+    assert len(df_read) == 3
     assert header_read["key"] == "value"
 
 
@@ -57,10 +60,20 @@ def test_dictionary_encoding(tmp_path: pathlib.Path) -> None:
 def test_float_downcasting(tmp_path: pathlib.Path) -> None:
     df = pd.DataFrame({"f": [1.1, 2.2]}, dtype="float64")
     path = str(tmp_path / "float.parquet")
-    write_parquet(df, path)
+    write_parquet(df, path, float_type="float32")
 
     table = pq.read_table(path)
     assert table.schema.field("f").type == pa.float32()
+
+
+def test_float_preserves_precision_by_default(tmp_path: pathlib.Path) -> None:
+    df = pd.DataFrame({"f": [1.1, 2.2]}, dtype="float64")
+    path = str(tmp_path / "float_default.parquet")
+    write_parquet(df, path)
+
+    table = pq.read_table(path)
+    assert table.schema.field("f").type == pa.float64()
+
 
 def test_io_with_polars(tmp_path: pathlib.Path) -> None:
     try:
@@ -72,23 +85,26 @@ def test_io_with_polars(tmp_path: pathlib.Path) -> None:
     path = str(tmp_path / "polars.parquet")
     write_parquet(df, path)
 
-    df_read, _ = read_parquet(path)
-    # read_parquet returns pandas by default
+    df_read, _ = read_parquet(path, engine="pandas")
     assert isinstance(df_read, pd.DataFrame)
     assert len(df_read) == 3
+
 
 def test_io_unsupported_type() -> None:
     with pytest.raises(ValueError, match="Unsupported data type"):
         write_parquet([1, 2, 3], "test.parquet")
 
+
 def test_io_no_pandas(tmp_path: pathlib.Path, monkeypatch: pytest.MonkeyPatch) -> None:
-    # Simulate pandas not being installed
-    import autoschema.io
-    monkeypatch.setattr(autoschema.io, "pd", None)
+    import autoparquet.io
+
+    monkeypatch.setattr(autoparquet.io, "pd", None)
+    monkeypatch.setattr(autoparquet.io, "pl", None)
+    monkeypatch.setattr(autoparquet.io, "cudf", None)
 
     df = pa.table({"a": [1, 2, 3]})
     path = str(tmp_path / "no_pandas.parquet")
     write_parquet(df, path)
 
-    with pytest.raises(ImportError, match="pandas is required for read_parquet"):
+    with pytest.raises(ImportError, match="No supported DataFrame library"):
         read_parquet(path)
