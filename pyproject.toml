@@ -20,9 +20,8 @@ classifiers = [
     "Topic :: Scientific/Engineering",
 ]
 dependencies = [
-    "pyarrow>=14.0.0",
-    "pandas>=2.0.0",
-    "numpy>=1.24.0",
+    "pyarrow>=20.0.0",
+    "numpy>=2.3.0",
 ]
 
 [project.scripts]
@@ -34,12 +33,15 @@ include = ["autoparquet*"]
 exclude = ["tests*", "asc*"]
 
 [project.optional-dependencies]
+pandas = ["pandas>=2.0.0"]
 polars = ["polars>=0.20.0"]
 dev = [
     "pytest>=7.0.0",
     "ruff>=0.1.0",
     "pre-commit>=3.0.0",
     "mypy>=1.0.0",
+    "pandas>=2.0.0",
+    "polars>=0.20.0",
 ]
 
 [project.urls]
