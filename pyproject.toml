@@ -3,7 +3,7 @@ requires = ["setuptools>=61.0"]
 build-backend = "setuptools.build_meta"
 
 [project]
-name = "autoschema"
+name = "autoparquet"
 version = "0.1.0"
 authors = [
   { name="Eric T. Dawson" },
@@ -25,8 +25,12 @@ dependencies = [
     "numpy>=1.24.0",
 ]
 
+[project.scripts]
+autoparquet = "autoparquet.cli:main"
+
 [tool.setuptools.packages.find]
-include = ["autoschema*"]
+where = ["src"]
+include = ["autoparquet*"]
 exclude = ["tests*", "asc*"]
 
 [project.optional-dependencies]
@@ -39,8 +43,8 @@ dev = [
 ]
 
 [project.urls]
-"Homepage" = "https://github.com/erictdawson/autoschema"
-"Bug Tracker" = "https://github.com/erictdawson/autoschema/issues"
+"Homepage" = "https://github.com/erictdawson/autoparquet"
+"Bug Tracker" = "https://github.com/erictdawson/autoparquet/issues"
 
 [tool.ruff]
 line-length = 88
