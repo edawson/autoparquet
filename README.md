@@ -67,8 +67,6 @@ autoparquet csv_to_parquet data.tsv -d $'\t' -f float32
 
 - [Usage Guide](docs/usage.md) - Detailed examples, API reference, and advanced features
 - [Contributing](CONTRIBUTING.md) - Development setup and contribution guidelines
-- [Compression Roadmap](docs/compression-roadmap.md) - Future optimization techniques
-- [Performance Analysis](docs/performance-analysis.md) - Casino and weather dataset optimization study
 
 ## Development
 
