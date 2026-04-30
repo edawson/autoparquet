@@ -8,6 +8,8 @@ from .transforms import (
     strings_to_fixed_size_binary,
 )
 
+__version__ = "0.1.2"
+
 __all__ = [
     "read_parquet",
     "write_parquet",

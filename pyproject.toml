@@ -4,7 +4,7 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "autoparquet"
-version = "0.1.0"
+version = "0.1.1"
 authors = [
   { name="Eric T. Dawson" },
 ]
@@ -20,8 +20,8 @@ classifiers = [
     "Topic :: Scientific/Engineering",
 ]
 dependencies = [
-    "pyarrow>=20.0.0",
-    "numpy>=2.3.0",
+    "pyarrow>=14.0.1",
+    "numpy>=1.24.0",
 ]
 
 [project.scripts]
