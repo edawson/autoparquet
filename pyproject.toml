@@ -10,7 +10,7 @@ authors = [
 ]
 description = "Automatically generate optimized Parquet/Arrow schemas for better compression."
 readme = "README.md"
-requires-python = ">=3.9"
+requires-python = ">=3.10"
 license = { text = "MIT" }
 classifiers = [
     "Programming Language :: Python :: 3",
@@ -20,8 +20,8 @@ classifiers = [
     "Topic :: Scientific/Engineering",
 ]
 dependencies = [
-    "pyarrow>=14.0.1",
-    "numpy>=1.24.0",
+    "pyarrow>=23.0.0",
+    "numpy>=1.26.0",
 ]
 
 [project.scripts]
@@ -50,14 +50,14 @@ dev = [
 
 [tool.ruff]
 line-length = 88
-target-version = "py39"
+target-version = "py310"
 
 [tool.ruff.lint]
 select = ["E", "F", "I", "N", "W", "B", "C4", "UP"]
 ignore = []
 
 [tool.mypy]
-python_version = "3.9"
+python_version = "3.10"
 warn_return_any = true
 warn_unused_configs = true
 disallow_untyped_defs = true
