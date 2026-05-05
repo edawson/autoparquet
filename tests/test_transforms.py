@@ -11,7 +11,6 @@ from autoparquet.transforms import (
     strings_to_fixed_size_binary,
 )
 
-
 # ---------------------------------------------------------------------------
 # map_to_vocabulary
 # ---------------------------------------------------------------------------
@@ -104,10 +103,12 @@ def test_strings_to_fixed_size_binary_skips_mixed_length() -> None:
 
 def test_strings_to_fixed_size_binary_preserves_other_columns() -> None:
     """Non-string columns alongside a promoted column must pass through unchanged."""
-    table = pa.table({
-        "kmer": pa.array(["AAAA", "CCCC"], type=pa.string()),
-        "count": pa.array([10, 20], type=pa.int32()),
-    })
+    table = pa.table(
+        {
+            "kmer": pa.array(["AAAA", "CCCC"], type=pa.string()),
+            "count": pa.array([10, 20], type=pa.int32()),
+        }
+    )
     result = strings_to_fixed_size_binary(table)
 
     assert pa.types.is_fixed_size_binary(result.schema.field("kmer").type)

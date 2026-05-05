@@ -114,7 +114,9 @@ def test_csv_to_parquet_roundtrip_values(
 def test_csv_to_parquet_roundtrip_float_downcast(tmp_path: pathlib.Path) -> None:
     """float32 precision requested via from_csv must survive the full round-trip."""
     csv_path = tmp_path / "floats.csv"
-    csv_path.write_text("name,score\nalpha,1.5\nbeta,2.5\ngamma,3.5\n", encoding="utf-8")
+    csv_path.write_text(
+        "name,score\nalpha,1.5\nbeta,2.5\ngamma,3.5\n", encoding="utf-8"
+    )
 
     # float_type="float32" applied at read time
     table = from_csv(str(csv_path), float_type="float32")
