@@ -215,3 +215,19 @@ def test_infer_schema_boolean_preserved() -> None:
     table = pa.table({"flag": pa.array([True, False, True])})
     schema = infer_schema(table)
     assert schema.field("flag").type == pa.bool_()
+
+
+# ---------------------------------------------------------------------------
+# infer_schema parameter validation
+# ---------------------------------------------------------------------------
+
+
+def test_infer_schema_invalid_float_type() -> None:
+    table = pa.table({"f": [1.0, 2.0]})
+    with pytest.raises(ValueError, match="float_type must be one of"):
+        infer_schema(table, float_type="banana")
+
+
+def test_infer_schema_rejects_non_table() -> None:
+    with pytest.raises(TypeError, match="expects a pyarrow.Table"):
+        infer_schema(pd.DataFrame({"a": [1, 2]}))  # type: ignore[arg-type]

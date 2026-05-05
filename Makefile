@@ -60,7 +60,7 @@ build: clean
 	@echo "Build complete. Files in dist/:"
 	@ls -lh dist/
 
-upload: 
+upload:
 	@echo "Uploading to test PyPI..."
 	twine upload --repository testpypi dist/*
 
@@ -73,3 +73,6 @@ prod:
 	else \
 		echo "Upload cancelled."; \
 	fi
+
+benchmark:
+	python benchmarks/bench.py

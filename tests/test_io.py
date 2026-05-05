@@ -238,6 +238,13 @@ def test_write_parquet_invalid_compression(tmp_path: pathlib.Path) -> None:
         write_parquet(df, str(tmp_path / "bad.parquet"), compression="BZIP2")
 
 
+def test_write_parquet_lzo_rejected(tmp_path: pathlib.Path) -> None:
+    """LZO is in the Parquet spec but not supported by PyArrow; we reject early."""
+    df = pd.DataFrame({"a": [1, 2]})
+    with pytest.raises(ValueError, match="Invalid compression type"):
+        write_parquet(df, str(tmp_path / "lzo.parquet"), compression="LZO")
+
+
 def test_write_parquet_snappy_no_level(tmp_path: pathlib.Path) -> None:
     """SNAPPY does not accept a compression level; write_parquet must not error."""
     df = pd.DataFrame({"a": [1, 2, 3]})
@@ -252,6 +259,71 @@ def test_write_parquet_column_encoding(tmp_path: pathlib.Path) -> None:
     path = str(tmp_path / "encoding.parquet")
     write_parquet(df, path, column_encoding={"pos": "DELTA_BINARY_PACKED"})
     assert pathlib.Path(path).exists()
+
+
+# ---------------------------------------------------------------------------
+# Parameter validation (added for public-API robustness)
+# ---------------------------------------------------------------------------
+
+
+def test_write_parquet_invalid_float_type(tmp_path: pathlib.Path) -> None:
+    df = pd.DataFrame({"f": [1.0, 2.0]})
+    with pytest.raises(ValueError, match="float_type must be one of"):
+        write_parquet(df, str(tmp_path / "bad.parquet"), float_type="banana")
+
+
+def test_write_parquet_invalid_data_page_size(tmp_path: pathlib.Path) -> None:
+    df = pd.DataFrame({"a": [1, 2]})
+    with pytest.raises(ValueError, match="data_page_size must be a positive int"):
+        write_parquet(df, str(tmp_path / "bad.parquet"), data_page_size=0)
+
+
+def test_write_parquet_compression_level_out_of_range(tmp_path: pathlib.Path) -> None:
+    df = pd.DataFrame({"a": [1, 2]})
+    with pytest.raises(ValueError, match="out of range for ZSTD"):
+        write_parquet(
+            df, str(tmp_path / "bad.parquet"), compression="ZSTD", compression_level=99
+        )
+
+
+def test_write_parquet_unknown_encoding_column(tmp_path: pathlib.Path) -> None:
+    df = pd.DataFrame({"a": [1, 2]})
+    with pytest.raises(ValueError, match="references unknown column"):
+        write_parquet(
+            df,
+            str(tmp_path / "bad.parquet"),
+            column_encoding={"missing": "DELTA_BINARY_PACKED"},
+        )
+
+
+def test_write_parquet_unsupported_encoding_value(tmp_path: pathlib.Path) -> None:
+    df = pd.DataFrame({"a": [1, 2]})
+    with pytest.raises(ValueError, match="Unsupported encoding"):
+        write_parquet(
+            df,
+            str(tmp_path / "bad.parquet"),
+            column_encoding={"a": "FANCY_ENCODING"},
+        )
+
+
+def test_write_parquet_missing_parent_directory(tmp_path: pathlib.Path) -> None:
+    df = pd.DataFrame({"a": [1, 2]})
+    bad_path = str(tmp_path / "does_not_exist" / "out.parquet")
+    with pytest.raises(FileNotFoundError, match="parent directory"):
+        write_parquet(df, bad_path)
+
+
+def test_read_parquet_missing_file() -> None:
+    with pytest.raises(FileNotFoundError, match="No such file"):
+        read_parquet("/tmp/this_file_definitely_does_not_exist.parquet")
+
+
+def test_read_parquet_invalid_engine_lists_options(tmp_path: pathlib.Path) -> None:
+    df = pd.DataFrame({"a": [1]})
+    path = str(tmp_path / "ok.parquet")
+    write_parquet(df, path)
+    with pytest.raises(ValueError, match="Unknown engine"):
+        read_parquet(path, engine="duckdb")
 
 
 # ---------------------------------------------------------------------------

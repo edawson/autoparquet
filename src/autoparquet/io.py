@@ -1,4 +1,5 @@
 import json
+import os
 from enum import Enum
 from typing import Any
 
@@ -20,18 +21,92 @@ _PROMOTED_STRING_COLUMNS_KEY = "__autoparquet_string_columns__"
 
 try:
     import pandas as pd
-except ImportError:
+except ImportError:  # pragma: no cover - optional dep
     pd = None  # type: ignore
 
 try:
     import polars as pl
-except ImportError:
+except ImportError:  # pragma: no cover - optional dep
     pl = None  # type: ignore
 
 try:
     import cudf
-except ImportError:
+except ImportError:  # pragma: no cover - optional dep
     cudf = None  # type: ignore
+
+
+# ---------------------------------------------------------------------------
+# Internal validation helpers
+# ---------------------------------------------------------------------------
+
+
+def _validate_float_type(float_type: str) -> None:
+    if float_type not in constants.VALID_FLOAT_TYPES:
+        raise ValueError(
+            f"float_type must be one of {constants.VALID_FLOAT_TYPES}, "
+            f"got {float_type!r}"
+        )
+
+
+def _validate_compression_level(compression: str, level: int | None) -> None:
+    """Range-check compression_level for codecs with documented bounds."""
+    if level is None:
+        return
+    if not isinstance(level, int) or isinstance(level, bool):
+        raise TypeError(
+            f"compression_level must be an int or None, got {type(level).__name__}"
+        )
+    bounds = constants.COMPRESSION_LEVEL_RANGES.get(compression)
+    if bounds and not bounds[0] <= level <= bounds[1]:
+        lo, hi = bounds
+        raise ValueError(
+            f"compression_level={level} is out of range for {compression}: "
+            f"expected {lo}..{hi}"
+        )
+
+
+def _validate_column_encoding(
+    encoding: dict[str, str] | None, column_names: list[str]
+) -> None:
+    """Validate that each (column, encoding) pair is usable."""
+    if not encoding:
+        return
+    if not isinstance(encoding, dict):
+        raise TypeError(
+            f"column_encoding must be a dict[str, str], got {type(encoding).__name__}"
+        )
+
+    table_columns = set(column_names)
+    for col, enc in encoding.items():
+        if col not in table_columns:
+            raise ValueError(
+                f"column_encoding references unknown column {col!r}; "
+                f"table columns are {sorted(table_columns)}"
+            )
+        if not isinstance(enc, str) or enc.upper() not in (
+            constants.VALID_COLUMN_ENCODINGS
+        ):
+            raise ValueError(
+                f"Unsupported encoding {enc!r} for column {col!r}; "
+                f"valid encodings are {constants.VALID_COLUMN_ENCODINGS}"
+            )
+
+
+def _ensure_writable_parent(path: str) -> None:
+    """Verify the parent directory of `path` exists (or path is in cwd)."""
+    parent = os.path.dirname(os.fspath(path))
+    if parent and not os.path.isdir(parent):
+        raise FileNotFoundError(
+            f"Cannot write to {path!r}: parent directory {parent!r} does not exist"
+        )
+
+
+def _ensure_readable_file(path: str) -> None:
+    """Verify the path exists and is a regular file."""
+    if not os.path.exists(path):
+        raise FileNotFoundError(f"No such file: {path!r}")
+    if not os.path.isfile(path):
+        raise IsADirectoryError(f"{path!r} is not a regular file")
 
 
 def _decode_dict_columns(table: pa.Table) -> pa.Table:
@@ -91,12 +166,17 @@ def _decode_promoted_string_columns(table: pa.Table) -> pa.Table:
 
 
 class CompressionType(str, Enum):
-    """Supported Parquet compression types."""
+    """Compression codecs supported by the PyArrow Parquet writer.
+
+    Note: ``LZO`` is part of the Parquet spec but is not implemented by
+    the C++ Arrow library, so it is intentionally excluded here. Attempting
+    to use it would otherwise fail deep inside PyArrow with an unhelpful
+    ``OSError``.
+    """
 
     NONE = "NONE"
     SNAPPY = "SNAPPY"
     GZIP = "GZIP"
-    LZO = "LZO"
     BROTLI = "BROTLI"
     LZ4 = "LZ4"
     ZSTD = "ZSTD"
@@ -107,12 +187,25 @@ class CompressionType(str, Enum):
 
 
 class EngineType(str, Enum):
-    """Supported DataFrame engines for reading."""
+    """DataFrame engines accepted by :func:`read_parquet`."""
 
     PANDAS = "pandas"
     POLARS = "polars"
     CUDF = "cudf"
     AUTO = "auto"
+
+    @classmethod
+    def from_value(cls, value: "str | EngineType") -> "EngineType":
+        """Coerce a string or enum member to an EngineType with a clear error."""
+        if isinstance(value, cls):
+            return value
+        try:
+            return cls(str(value).lower())
+        except ValueError as err:
+            valid = ", ".join(m.value for m in cls)
+            raise ValueError(
+                f"Unknown engine {value!r}; expected one of: {valid}"
+            ) from err
 
 
 def write_parquet(
@@ -127,27 +220,41 @@ def write_parquet(
     column_encoding: dict[str, str] | None = None,
     **kwargs: Any,
 ) -> None:
-    """
-    Writes data to a Parquet file with an optimized schema and custom header.
+    """Write a DataFrame to a Parquet file with an optimized schema.
 
     Args:
         data: A pandas DataFrame, polars DataFrame, cuDF DataFrame, or Arrow Table.
-        path: Output file path.
-        header: Optional key-value metadata to store in the Parquet file.
-        compression: Compression algorithm (ZSTD, SNAPPY, GZIP, etc.).
-        compression_level: Compression level (algorithm-dependent).
-        use_parquet_dictionary_compression: Let Parquet apply its own dictionary
+        path: Output file path. The parent directory must already exist.
+        header: Optional key-value metadata to store in the Parquet file. Both
+            keys and values are encoded as UTF-8 byte strings.
+        compression: Compression codec name or :class:`CompressionType` member.
+            Supported codecs: NONE, SNAPPY, GZIP, BROTLI, LZ4, ZSTD.
+        compression_level: Codec-specific compression level. Range-checked for
+            ZSTD (1-22), GZIP (1-9), and BROTLI (0-11). Ignored for SNAPPY/LZ4.
+        use_parquet_dictionary_compression: Apply Parquet's own dictionary
             encoding pass on top of the schema-level optimizations.
-        data_page_size: Parquet data page size in bytes.
-        float_type: Target float precision ("float16", "float32", or "float64").
+        data_page_size: Parquet data page size in bytes (must be positive).
+        float_type: Target float precision: "float16", "float32", or "float64".
         column_encoding: Optional mapping of column names to Parquet encodings.
-            Supported encodings: "PLAIN", "RLE", "BIT_PACKED",
-            "PLAIN_DICTIONARY", "RLE_DICTIONARY", "DELTA_BINARY_PACKED",
-            "DELTA_LENGTH_BYTE_ARRAY", "DELTA_BYTE_ARRAY", "BYTE_STREAM_SPLIT".
-            Example: {"timestamp": "DELTA_BINARY_PACKED",
-            "position": "DELTA_BINARY_PACKED"}
-        **kwargs: Additional arguments forwarded to pyarrow.parquet.write_table.
+            Supported: PLAIN, BYTE_STREAM_SPLIT, DELTA_BINARY_PACKED,
+            DELTA_LENGTH_BYTE_ARRAY, DELTA_BYTE_ARRAY. Setting this disables
+            global dictionary encoding; use ``use_dictionary=[col, ...]`` (a
+            list) in **kwargs to keep dict on selected columns.
+        **kwargs: Additional arguments forwarded to ``pyarrow.parquet.write_table``.
+
+    Raises:
+        FileNotFoundError: if the parent directory of ``path`` does not exist.
+        TypeError: for ill-typed parameters.
+        ValueError: for unsupported compression codecs, invalid encodings,
+            out-of-range compression levels, or unsupported ``float_type``.
     """
+    # ----- Up-front parameter validation ----------------------------------
+    _validate_float_type(float_type)
+    if not isinstance(data_page_size, int) or data_page_size <= 0:
+        raise ValueError(
+            f"data_page_size must be a positive int, got {data_page_size!r}"
+        )
+
     comp_str = (
         compression.value
         if isinstance(compression, CompressionType)
@@ -156,17 +263,23 @@ def write_parquet(
     if not CompressionType.is_valid(comp_str):
         valid_types = ", ".join(CompressionType._member_names_)
         raise ValueError(
-            f"Invalid compression type: {compression}. Valid types are: {valid_types}"
+            f"Invalid compression type: {compression!r}. Valid types are: {valid_types}"
         )
 
-    # Codecs that don't support a compression level parameter
-    if comp_str in ("SNAPPY", "LZ4") and compression_level is not None:
-        logger.warning(
+    # Codecs that don't accept a level: silently drop it with a debug note.
+    if comp_str in ("SNAPPY", "LZ4", "NONE") and compression_level is not None:
+        logger.debug(
             "compression_level ignored for %s (not supported by this codec)", comp_str
         )
         compression_level = None
+    else:
+        _validate_compression_level(comp_str, compression_level)
+
+    _ensure_writable_parent(path)
 
     table = to_arrow_table(data)
+    _validate_column_encoding(column_encoding, table.column_names)
+
     original_schema = table.schema
     optimized_schema = infer_schema(table, float_type=float_type)
     table = table.cast(optimized_schema, safe=False)
@@ -219,14 +332,32 @@ def write_parquet(
 def read_parquet(
     path: str, engine: str | EngineType = EngineType.AUTO
 ) -> tuple[Any, dict[str, str]]:
-    """
-    Reads a Parquet file and returns (data, header_metadata).
+    """Read a Parquet file written by :func:`write_parquet`.
+
+    Optimizations applied at write time (low-cardinality strings stored as
+    Arrow Dictionary, uniform-length strings stored as FixedSizeBinary) are
+    transparently reversed so callers see plain string columns.
 
     Args:
-        path: Path to the Parquet file.
-        engine: DataFrame engine to use ('pandas', 'polars', 'cudf', or 'auto').
-                'auto' tries polars, then cudf, then pandas.
+        path: Path to an existing Parquet file.
+        engine: Target DataFrame library: "pandas", "polars", "cudf", or
+            "auto" (the default). "auto" tries polars, then cudf, then pandas
+            and uses the first that is installed.
+
+    Returns:
+        A 2-tuple ``(dataframe, header_metadata)``. The header is the
+        user-supplied ``header`` dict from :func:`write_parquet` (UTF-8
+        decoded), with internal sentinel keys filtered out.
+
+    Raises:
+        FileNotFoundError: if ``path`` does not exist.
+        ValueError: if ``engine`` is not a recognized engine name.
+        ImportError: if a specific engine is requested but not installed, or
+            if ``engine='auto'`` and no supported library is installed.
     """
+    _ensure_readable_file(path)
+    engine_enum = EngineType.from_value(engine)
+
     table = pq.read_table(path)
 
     # Decode types that were optimized at write time back to their original forms
@@ -241,35 +372,42 @@ def read_parquet(
         if k != _PROMOTED_STRING_COLUMNS_KEY.encode()
     }
 
-    if isinstance(engine, str):
-        engine = EngineType(engine.lower())
-    auto = engine == EngineType.AUTO
+    auto = engine_enum == EngineType.AUTO
+    logger.debug("reading %s (engine: %s)", path, engine_enum.value)
 
-    logger.debug("reading %s (engine: %s)", path, engine.value)
-
-    if engine == EngineType.POLARS or auto:
+    if engine_enum == EngineType.POLARS or auto:
         if pl is not None:
             logger.info("read %d rows ← %s (engine: polars)", table.num_rows, path)
             return pl.from_arrow(table), header
         if not auto:
-            raise ImportError("polars is not installed but was explicitly requested.")
+            raise ImportError(
+                "polars is not installed but was explicitly requested. "
+                "Install with: pip install polars"
+            )
 
-    if engine == EngineType.CUDF or auto:
+    if engine_enum == EngineType.CUDF or auto:
         if cudf is not None:
             logger.info("read %d rows ← %s (engine: cudf)", table.num_rows, path)
             return cudf.from_arrow(table), header
         if not auto:
-            raise ImportError("cudf is not installed but was explicitly requested.")
+            raise ImportError(
+                "cudf is not installed but was explicitly requested. "
+                "Install RAPIDS cuDF for your CUDA version: https://rapids.ai/"
+            )
 
-    if engine == EngineType.PANDAS or auto:
+    if engine_enum == EngineType.PANDAS or auto:
         if pd is not None:
             logger.info("read %d rows ← %s (engine: pandas)", table.num_rows, path)
             return table.to_pandas(), header
         if not auto:
-            raise ImportError("pandas is not installed but was explicitly requested.")
+            raise ImportError(
+                "pandas is not installed but was explicitly requested. "
+                "Install with: pip install pandas"
+            )
 
     raise ImportError(
-        f"No supported DataFrame library for engine '{engine.value}' is installed."
+        "No supported DataFrame library is installed. Install one of: "
+        "pandas, polars, or cudf."
     )
 
 
@@ -281,17 +419,23 @@ def from_csv(
     float_type: str = "float64",
     **kwargs: Any,
 ) -> pa.Table:
-    """
-    Reads a CSV/TSV file directly into an optimized Arrow Table.
+    """Read a CSV/TSV file into an optimized Arrow Table.
 
     Args:
-        path: Path to the CSV/TSV file.
-        delimiter: Field delimiter (e.g., ',' or '\\t').
+        path: Path to an existing CSV/TSV file.
+        delimiter: Field delimiter (e.g. ``','`` or ``'\\t'``).
         quote_char: Quoting character.
         escape_char: Escape character.
-        float_type: Target float precision ("float16", "float32", or "float64").
-        **kwargs: Additional arguments passed to pyarrow.csv.read_csv.
+        float_type: Target float precision: "float16", "float32", or "float64".
+        **kwargs: Additional arguments passed to ``pyarrow.csv.read_csv``.
+
+    Raises:
+        FileNotFoundError: if ``path`` does not exist.
+        ValueError: if ``float_type`` is not supported.
     """
+    _ensure_readable_file(path)
+    _validate_float_type(float_type)
+
     parse_options = pv.ParseOptions(
         delimiter=delimiter, quote_char=quote_char, escape_char=escape_char
     )
@@ -310,50 +454,59 @@ def from_excel(
     float_type: str = "float64",
     **kwargs: Any,
 ) -> pa.Table:
-    """
-    Reads an Excel file (XLSX/XLS/XLSB) into an optimized Arrow Table.
+    """Read an Excel sheet (XLSX/XLS/XLSB) into an optimized Arrow Table.
 
-    Uses python-calamine for fast, Rust-based Excel reading
-    (no runtime Rust dependency).
+    Uses python-calamine for fast, Rust-based Excel reading.
 
     Args:
-        path: Path to the Excel file (.xlsx, .xls, .xlsb, or ODF format).
-        sheet_name: Sheet name or index to read (default: 0, first sheet).
-        float_type: Target float precision
-            ("float16", "float32", or "float64").
-        **kwargs: Additional arguments (reserved for future use).
+        path: Path to an existing Excel file.
+        sheet_name: Sheet name or 0-based index (default: 0, first sheet).
+        float_type: Target float precision: "float16", "float32", or "float64".
+        **kwargs: Reserved for future use.
 
-    Returns:
-        Optimized Arrow Table.
+    Raises:
+        FileNotFoundError: if ``path`` does not exist.
+        ValueError: if ``float_type`` is unsupported, or the requested sheet
+            does not exist.
+        ImportError: if python-calamine or pandas is not installed.
     """
+    _ensure_readable_file(path)
+    _validate_float_type(float_type)
+
     try:
         from python_calamine import CalamineWorkbook
     except ImportError as err:
         raise ImportError(
-            "python-calamine is not installed but is required to read "
-            "Excel files. Please install python-calamine to use this "
-            "functionality: pip install python-calamine"
+            "python-calamine is required to read Excel files. "
+            "Install with: pip install python-calamine"
         ) from err
 
     workbook = CalamineWorkbook.from_path(path)
 
-    # Get sheet by name or index
     if isinstance(sheet_name, int):
         sheet_names = workbook.sheet_names
-        if sheet_name >= len(sheet_names):
+        if sheet_name < 0 or sheet_name >= len(sheet_names):
             raise ValueError(
-                f"Sheet index {sheet_name} out of range. "
-                f"Workbook has {len(sheet_names)} sheets."
+                f"Sheet index {sheet_name} out of range; workbook has "
+                f"{len(sheet_names)} sheets ({sheet_names})"
             )
         sheet = workbook.get_sheet_by_index(sheet_name)
-    else:
+    elif isinstance(sheet_name, str):
+        if sheet_name not in workbook.sheet_names:
+            raise ValueError(
+                f"Sheet {sheet_name!r} not found; available sheets: "
+                f"{workbook.sheet_names}"
+            )
         sheet = workbook.get_sheet_by_name(sheet_name)
+    else:
+        raise TypeError(
+            f"sheet_name must be a str or int, got {type(sheet_name).__name__}"
+        )
 
-    # Convert to pandas DataFrame, then to Arrow Table
     if pd is None:
         raise ImportError(
-            "pandas is not installed but is required for Excel conversion. "
-            "Please install pandas to use this functionality."
+            "pandas is required to convert Excel sheets to Arrow Tables. "
+            "Install with: pip install pandas"
         )
 
     df = sheet.to_python(empty_value="", header=1)
@@ -380,22 +533,26 @@ def to_excel(
     sheet_name: str = "Sheet1",
     **kwargs: Any,
 ) -> None:
-    """
-    Writes data to an Excel file (XLSX).
+    """Write a DataFrame to an Excel file (XLSX).
 
     Args:
         data: A pandas DataFrame, polars DataFrame, cuDF DataFrame, or Arrow Table.
-        path: Output file path (.xlsx).
+        path: Output file path (.xlsx). Parent directory must exist.
         sheet_name: Name of the sheet to create (default: "Sheet1").
-        **kwargs: Additional arguments passed to pd.DataFrame.to_excel.
+        **kwargs: Additional arguments passed to ``pandas.DataFrame.to_excel``.
+
+    Raises:
+        FileNotFoundError: if the parent directory of ``path`` does not exist.
+        ImportError: if pandas is not installed.
+        ValueError: if ``data`` cannot be converted to a pandas DataFrame.
     """
     if pd is None:
         raise ImportError(
-            "pandas is not installed but is required to write Excel files. "
-            "Please install pandas to use this functionality."
+            "pandas is required to write Excel files. Install with: pip install pandas"
         )
 
-    # Convert to pandas DataFrame if needed
+    _ensure_writable_parent(path)
+
     if isinstance(data, pa.Table):
         df = data.to_pandas()
     elif isinstance(data, pd.DataFrame):
@@ -404,8 +561,9 @@ def to_excel(
         df = data.to_pandas()
     else:
         raise ValueError(
-            f"Unsupported data type for Excel export: {type(data)}. "
-            "Expected pandas DataFrame, Arrow Table, or compatible format."
+            f"Unsupported data type for Excel export: {type(data).__name__}. "
+            "Expected pandas DataFrame, Arrow Table, or any object with a "
+            "to_pandas() method."
         )
 
     df.to_excel(path, sheet_name=sheet_name, **kwargs)

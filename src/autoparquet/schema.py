@@ -17,8 +17,7 @@ def _smallest_index_type(n: int) -> pa.DataType:
 
 
 def infer_schema(table: pa.Table, float_type: str = "float64") -> pa.Schema:
-    """
-    Infers an optimized Arrow schema for the given table.
+    """Infer an optimized Arrow schema for the given table.
 
     Optimizations applied per column:
       - Integers: downcast to the smallest type that fits the data range.
@@ -34,7 +33,21 @@ def infer_schema(table: pa.Table, float_type: str = "float64") -> pa.Schema:
         float_type: Target float precision ("float16", "float32", or "float64").
                     Defaults to "float64" (lossless). Use "float32" to halve
                     float storage when full precision is not needed.
+
+    Raises:
+        TypeError: if ``table`` is not a pyarrow.Table.
+        ValueError: if ``float_type`` is not one of the supported precisions.
     """
+    if not isinstance(table, pa.Table):
+        raise TypeError(
+            f"infer_schema expects a pyarrow.Table, got {type(table).__name__}"
+        )
+    if float_type not in constants.VALID_FLOAT_TYPES:
+        raise ValueError(
+            f"float_type must be one of {constants.VALID_FLOAT_TYPES}, "
+            f"got {float_type!r}"
+        )
+
     fields = []
 
     for i in range(table.num_columns):
