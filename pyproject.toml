@@ -47,8 +47,8 @@ dev = [
 ]
 
 [project.urls]
-"Homepage" = "https://github.com/erictdawson/autoparquet"
-"Bug Tracker" = "https://github.com/erictdawson/autoparquet/issues"
+"Homepage" = "https://github.com/edawson/autoparquet"
+"Bug Tracker" = "https://github.com/edawson/autoparquet/issues"
 
 [tool.ruff]
 line-length = 88

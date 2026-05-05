@@ -32,8 +32,8 @@ df = pd.DataFrame({
 
 # Write with automatic schema optimization and a custom header
 autoparquet.write_parquet(
-    df, 
-    "data.parquet", 
+    df,
+    "data.parquet",
     header={"version": "1.0", "author": "Eric T. Dawson"}
 )
 
@@ -105,7 +105,7 @@ MIT License
   author = {Dawson, Eric T.},
   title = {AutoParquet: Automatic Schema Optimization for Parquet Files},
   year = {2026},
-  url = {https://github.com/erictdawson/autoparquet}
+  url = {https://github.com/edawson/autoparquet}
 }
 ```
 
