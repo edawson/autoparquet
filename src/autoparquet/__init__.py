@@ -24,7 +24,7 @@ from .transforms import (
     strings_to_fixed_size_binary,
 )
 
-__version__ = "0.1.4"
+__version__ = "0.1.5"
 
 __all__ = [
     # Parquet I/O
