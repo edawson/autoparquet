@@ -21,7 +21,7 @@ classifiers = [
 ]
 dependencies = [
     "pyarrow>=23.0.0",
-    "numpy>=1.26.0",
+    "numpy>=1.24.0",
 ]
 
 [project.scripts]
@@ -34,6 +34,7 @@ exclude = ["tests*", "asc*"]
 
 [project.optional-dependencies]
 pandas = ["pandas>=2.0.0"]
+excel = ["python-calamine>=0.6.0"]
 polars = ["polars>=0.20.0"]
 dev = [
     "pytest>=7.0.0",
@@ -42,6 +43,7 @@ dev = [
     "mypy>=1.0.0",
     "pandas>=2.0.0",
     "polars>=0.20.0",
+    "python-calamine>=0.6.0",
 ]
 
 [project.urls]

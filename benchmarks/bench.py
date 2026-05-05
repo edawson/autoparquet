@@ -14,7 +14,6 @@ import random
 import tempfile
 import time
 from dataclasses import dataclass
-from typing import Optional
 
 import numpy as np
 import pandas as pd
@@ -175,7 +174,7 @@ DATASETS: list[tuple[str, callable, dict[str, int]]] = [
 class CompressionConfig:
     """A compression algorithm with an optional level."""
     algo: str
-    level: Optional[int]
+    level: int | None
 
     @property
     def label(self) -> str:

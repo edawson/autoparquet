@@ -1,4 +1,3 @@
-from typing import Tuple
 
 import pyarrow as pa
 import pyarrow.compute as pc
@@ -32,7 +31,7 @@ def map_to_vocabulary(
 
     def encode_chunk(chunk: pa.Array) -> pa.DictionaryArray:
         # Map chunk values to vocabulary indices
-        indices = pc.index_in(chunk, value_set=vocab_array)
+        indices = pc.index_in(chunk, value_set=vocab_array)  # type: ignore[attr-defined]
         indices = indices.cast(index_type)
         return pa.DictionaryArray.from_arrays(indices, vocab_array)
 
@@ -59,9 +58,9 @@ def cast_to_fixed_binary(table: pa.Table, column_name: str) -> pa.Table:
     column = table.column(col_idx)
 
     # Validate uniform length
-    lengths = pc.binary_length(column)
-    min_len_scalar = pc.min(lengths)
-    max_len_scalar = pc.max(lengths)
+    lengths = pc.binary_length(column)  # type: ignore[attr-defined]
+    min_len_scalar = pc.min(lengths)  # type: ignore[attr-defined]
+    max_len_scalar = pc.max(lengths)  # type: ignore[attr-defined]
 
     min_len = min_len_scalar.as_py() if min_len_scalar.is_valid else None
     max_len = max_len_scalar.as_py() if max_len_scalar.is_valid else None
@@ -83,7 +82,8 @@ def cast_to_fixed_binary(table: pa.Table, column_name: str) -> pa.Table:
 
 def strings_to_fixed_size_binary(table: pa.Table) -> pa.Table:
     """
-    Detects string/binary columns with uniform length and converts them to FixedSizeBinary.
+    Detects string/binary columns with uniform length and converts them to
+    FixedSizeBinary.
 
     This is particularly efficient for kmers and other fixed-length sequences.
     """
@@ -102,9 +102,9 @@ def strings_to_fixed_size_binary(table: pa.Table) -> pa.Table:
             or pa.types.is_large_binary(dtype)
         ):
             # Check for uniform length
-            lengths = pc.binary_length(column)
-            min_len_scalar = pc.min(lengths)
-            max_len_scalar = pc.max(lengths)
+            lengths = pc.binary_length(column)  # type: ignore[attr-defined]
+            min_len_scalar = pc.min(lengths)  # type: ignore[attr-defined]
+            max_len_scalar = pc.max(lengths)  # type: ignore[attr-defined]
 
             min_len = min_len_scalar.as_py() if min_len_scalar.is_valid else None
             max_len = max_len_scalar.as_py() if max_len_scalar.is_valid else None
@@ -125,7 +125,7 @@ def strings_to_fixed_size_binary(table: pa.Table) -> pa.Table:
 
 def extract_string_vocabulary(
     table: pa.Table, column_name: str
-) -> Tuple[pa.Table, list[str]]:
+) -> tuple[pa.Table, list[str]]:
     """
     Extract unique string values from a column and create an integer-indexed mapping.
 
@@ -149,8 +149,8 @@ def extract_string_vocabulary(
     column = table.column(col_idx)
 
     # Get unique values, sorted
-    unique_vals = pc.unique(column)
-    sorted_vals = pc.sort_indices(unique_vals)
+    unique_vals = pc.unique(column)  # type: ignore[attr-defined]
+    sorted_vals = pc.sort_indices(unique_vals)  # type: ignore[attr-defined]
     vocabulary = pc.take(unique_vals, sorted_vals).to_pylist()
 
     # Map column to indices using the vocabulary

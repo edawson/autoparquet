@@ -42,8 +42,8 @@ def infer_schema(table: pa.Table, float_type: str = "float64") -> pa.Schema:
 
         # 1. Integer optimization: find the smallest type that fits.
         if pa.types.is_integer(dtype):
-            min_val = pc.min(column).as_py()
-            max_val = pc.max(column).as_py()
+            min_val = pc.min(column).as_py()  # type: ignore[attr-defined]
+            max_val = pc.max(column).as_py()  # type: ignore[attr-defined]
 
             if min_val is not None and max_val is not None:
                 if min_val >= 0:
@@ -108,12 +108,12 @@ def infer_schema(table: pa.Table, float_type: str = "float64") -> pa.Schema:
                 # For high-cardinality columns, check for uniform length.
                 # FixedSizeBinary removes the 4-byte offset overhead per row.
                 if pa.types.is_string(dtype) or pa.types.is_large_string(dtype):
-                    lengths = pc.utf8_length(column)
+                    lengths = pc.utf8_length(column)  # type: ignore[attr-defined]
                 else:
-                    lengths = pc.binary_length(column)
+                    lengths = pc.binary_length(column)  # type: ignore[attr-defined]
 
-                min_len = pc.min(lengths).as_py()
-                max_len = pc.max(lengths).as_py()
+                min_len = pc.min(lengths).as_py()  # type: ignore[attr-defined]
+                max_len = pc.max(lengths).as_py()  # type: ignore[attr-defined]
 
                 if min_len is not None and min_len == max_len and min_len > 0:
                     new_type = pa.binary(min_len)

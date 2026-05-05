@@ -1,5 +1,5 @@
 from enum import Enum
-from typing import Any, Optional, Union
+from typing import Any
 
 import pyarrow as pa
 import pyarrow.csv as pv
@@ -54,12 +54,13 @@ class EngineType(str, Enum):
 def write_parquet(
     data: Any,
     path: str,
-    header: Optional[dict[str, str]] = None,
-    compression: Union[str, CompressionType] = constants.DEFAULT_COMPRESSION,
-    compression_level: Optional[int] = constants.DEFAULT_COMPRESSION_LEVEL,
+    header: dict[str, str] | None = None,
+    compression: str | CompressionType = constants.DEFAULT_COMPRESSION,
+    compression_level: int | None = constants.DEFAULT_COMPRESSION_LEVEL,
     use_parquet_dictionary_compression: bool = True,
     data_page_size: int = constants.DEFAULT_PAGE_SIZE,
     float_type: str = "float64",
+    column_encoding: dict[str, str] | None = None,
     **kwargs: Any,
 ) -> None:
     """
@@ -75,6 +76,12 @@ def write_parquet(
             encoding pass on top of the schema-level optimizations.
         data_page_size: Parquet data page size in bytes.
         float_type: Target float precision ("float16", "float32", or "float64").
+        column_encoding: Optional mapping of column names to Parquet encodings.
+            Supported encodings: "PLAIN", "RLE", "BIT_PACKED",
+            "PLAIN_DICTIONARY", "RLE_DICTIONARY", "DELTA_BINARY_PACKED",
+            "DELTA_LENGTH_BYTE_ARRAY", "DELTA_BYTE_ARRAY", "BYTE_STREAM_SPLIT".
+            Example: {"timestamp": "DELTA_BINARY_PACKED",
+            "position": "DELTA_BINARY_PACKED"}
         **kwargs: Additional arguments forwarded to pyarrow.parquet.write_table.
     """
     comp_str = (
@@ -103,21 +110,25 @@ def write_parquet(
             new_metadata[k.encode("utf-8")] = str(v).encode("utf-8")
         table = table.replace_schema_metadata(new_metadata)
 
-    write_table(
-        table,
-        path,
-        compression=comp_str,
-        compression_level=compression_level,
-        use_dictionary=use_parquet_dictionary_compression,
-        data_page_size=data_page_size,
-        row_group_size=constants.DEFAULT_ROW_GROUP_SIZE,
-        version=constants.DEFAULT_PARQUET_VERSION,
-        **kwargs,
-    )
+    write_kwargs: dict[str, Any] = {
+        "compression": comp_str,
+        "compression_level": compression_level,
+        "use_dictionary": use_parquet_dictionary_compression,
+        "data_page_size": data_page_size,
+        "row_group_size": constants.DEFAULT_ROW_GROUP_SIZE,
+        "version": constants.DEFAULT_PARQUET_VERSION,
+    }
+
+    # Add column encoding if specified
+    if column_encoding:
+        write_kwargs["column_encoding"] = column_encoding
+
+    write_kwargs.update(kwargs)
+    write_table(table, path, **write_kwargs)
 
 
 def read_parquet(
-    path: str, engine: Union[str, EngineType] = EngineType.AUTO
+    path: str, engine: str | EngineType = EngineType.AUTO
 ) -> tuple[Any, dict[str, str]]:
     """
     Reads a Parquet file and returns (data, header_metadata).
@@ -163,7 +174,7 @@ def from_csv(
     path: str,
     delimiter: str = ",",
     quote_char: str = '"',
-    escape_char: Optional[str] = None,
+    escape_char: str | None = None,
     float_type: str = "float64",
     **kwargs: Any,
 ) -> pa.Table:
@@ -185,3 +196,110 @@ def from_csv(
 
     optimized_schema = infer_schema(table, float_type=float_type)
     return table.cast(optimized_schema, safe=False)
+
+
+def from_excel(
+    path: str,
+    sheet_name: str | int = 0,
+    float_type: str = "float64",
+    **kwargs: Any,
+) -> pa.Table:
+    """
+    Reads an Excel file (XLSX/XLS/XLSB) into an optimized Arrow Table.
+
+    Uses python-calamine for fast, Rust-based Excel reading
+    (no runtime Rust dependency).
+
+    Args:
+        path: Path to the Excel file (.xlsx, .xls, .xlsb, or ODF format).
+        sheet_name: Sheet name or index to read (default: 0, first sheet).
+        float_type: Target float precision
+            ("float16", "float32", or "float64").
+        **kwargs: Additional arguments (reserved for future use).
+
+    Returns:
+        Optimized Arrow Table.
+    """
+    try:
+        from python_calamine import CalamineWorkbook
+    except ImportError as err:
+        raise ImportError(
+            "python-calamine is not installed but is required to read "
+            "Excel files. Please install python-calamine to use this "
+            "functionality: pip install python-calamine"
+        ) from err
+
+    workbook = CalamineWorkbook.from_path(path)
+
+    # Get sheet by name or index
+    if isinstance(sheet_name, int):
+        sheet_names = workbook.sheet_names
+        if sheet_name >= len(sheet_names):
+            raise ValueError(
+                f"Sheet index {sheet_name} out of range. "
+                f"Workbook has {len(sheet_names)} sheets."
+            )
+        sheet = workbook.get_sheet_by_index(sheet_name)
+    else:
+        sheet = workbook.get_sheet_by_name(sheet_name)
+
+    # Convert to pandas DataFrame, then to Arrow Table
+    if pd is None:
+        raise ImportError(
+            "pandas is not installed but is required for Excel conversion. "
+            "Please install pandas to use this functionality."
+        )
+
+    df = sheet.to_python(
+        # Use headers from first row, convert to the expected format
+        empty_value="",
+        header=1,
+    )
+
+    # Convert dict/list format to proper DataFrame if needed
+    if isinstance(df, list):
+        if df and isinstance(df[0], dict):
+            df = pd.DataFrame(df)
+        else:
+            df = pd.DataFrame(df)
+
+    table = pa.Table.from_pandas(df)
+    optimized_schema = infer_schema(table, float_type=float_type)
+    return table.cast(optimized_schema, safe=False)
+
+
+def to_excel(
+    data: Any,
+    path: str,
+    sheet_name: str = "Sheet1",
+    **kwargs: Any,
+) -> None:
+    """
+    Writes data to an Excel file (XLSX).
+
+    Args:
+        data: A pandas DataFrame, polars DataFrame, cuDF DataFrame, or Arrow Table.
+        path: Output file path (.xlsx).
+        sheet_name: Name of the sheet to create (default: "Sheet1").
+        **kwargs: Additional arguments passed to pd.DataFrame.to_excel.
+    """
+    if pd is None:
+        raise ImportError(
+            "pandas is not installed but is required to write Excel files. "
+            "Please install pandas to use this functionality."
+        )
+
+    # Convert to pandas DataFrame if needed
+    if isinstance(data, pa.Table):
+        df = data.to_pandas()
+    elif isinstance(data, pd.DataFrame):
+        df = data
+    elif hasattr(data, "to_pandas"):
+        df = data.to_pandas()
+    else:
+        raise ValueError(
+            f"Unsupported data type for Excel export: {type(data)}. "
+            "Expected pandas DataFrame, Arrow Table, or compatible format."
+        )
+
+    df.to_excel(path, sheet_name=sheet_name, **kwargs)
