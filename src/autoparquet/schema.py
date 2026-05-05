@@ -2,6 +2,9 @@ import pyarrow as pa
 import pyarrow.compute as pc
 
 from . import constants
+from .utils.logger import get_logger
+
+logger = get_logger(__name__)
 
 
 def _smallest_index_type(n: int) -> pa.DataType:
@@ -125,14 +128,17 @@ def infer_schema(table: pa.Table, float_type: str = "float64") -> pa.Schema:
             if dtype.index_type != index_type:
                 new_type = pa.dictionary(index_type, dtype.value_type)
 
-        # 5. Boolean: Arrow already bit-packs booleans; just preserve the type.
+        # 5. Boolean: Arrow already bit-packs booleans; no change needed.
         elif pa.types.is_boolean(dtype):
-            new_type = pa.bool_()
+            pass
 
         # 6. Timestamp: downcast ns to us for broader compatibility.
         elif pa.types.is_timestamp(dtype):
             if dtype.unit == "ns":
                 new_type = pa.timestamp("us", tz=dtype.tz)
+
+        if new_type != dtype:
+            logger.debug("column '%s': %s → %s", name, dtype, new_type)
 
         fields.append(pa.field(name, new_type, nullable=table.schema.field(i).nullable))
 

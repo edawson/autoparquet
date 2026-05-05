@@ -1,8 +1,10 @@
-
 import pyarrow as pa
 import pyarrow.compute as pc
 
 from .schema import _smallest_index_type
+from .utils.logger import get_logger
+
+logger = get_logger(__name__)
 
 
 def map_to_vocabulary(

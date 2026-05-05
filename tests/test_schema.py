@@ -3,7 +3,7 @@ import pyarrow as pa
 import pytest
 
 from autoparquet.converters import to_arrow_table
-from autoparquet.schema import infer_schema
+from autoparquet.schema import _smallest_index_type, infer_schema
 from autoparquet.transforms import (
     cast_to_fixed_binary,
     extract_string_vocabulary,
@@ -93,9 +93,7 @@ def test_infer_schema_dictionary_downcast() -> None:
 
 def test_extract_string_vocabulary() -> None:
     # Test extracting and indexing a string column
-    df = pd.DataFrame({
-        "chromosome": ["chr1", "chr2", "chr10", "chr1", "chrX", "chr2"]
-    })
+    df = pd.DataFrame({"chromosome": ["chr1", "chr2", "chr10", "chr1", "chrX", "chr2"]})
     table = to_arrow_table(df)
 
     # Extract vocabulary
@@ -131,3 +129,89 @@ def test_extract_string_vocabulary_many_unique() -> None:
     # Index type should be uint16 (since 500 > 255)
     field = indexed_table.schema.field("name")
     assert field.type.index_type == pa.uint16()
+
+
+# ---------------------------------------------------------------------------
+# _smallest_index_type boundaries
+# ---------------------------------------------------------------------------
+
+
+def test_smallest_index_type_boundaries() -> None:
+    assert _smallest_index_type(0) == pa.uint8()
+    assert _smallest_index_type(255) == pa.uint8()
+    assert _smallest_index_type(256) == pa.uint16()
+    assert _smallest_index_type(65535) == pa.uint16()
+    assert _smallest_index_type(65536) == pa.int32()
+    assert _smallest_index_type(1_000_000) == pa.int32()
+
+
+# ---------------------------------------------------------------------------
+# infer_schema branch coverage
+# ---------------------------------------------------------------------------
+
+
+def test_infer_schema_uniform_length_strings() -> None:
+    """High-cardinality, uniform-length string column must become fixed_size_binary."""
+    # 100 unique 4-char strings — ratio 1.0 > 0.5, total >= 100 → not low-cardinality
+    values = [f"{i:04d}" for i in range(100)]
+    table = pa.table({"kmer": pa.array(values, type=pa.string())})
+
+    schema = infer_schema(table)
+    assert pa.types.is_fixed_size_binary(schema.field("kmer").type)
+    assert schema.field("kmer").type.byte_width == 4
+
+
+def test_infer_schema_timestamp_ns_to_us_naive() -> None:
+    """Tz-naive timestamp[ns] must be downcast to timestamp[us]."""
+    ts = pa.array([1_000_000, 2_000_000], type=pa.timestamp("ns"))
+    table = pa.table({"ts": ts})
+
+    schema = infer_schema(table)
+    assert schema.field("ts").type == pa.timestamp("us")
+
+
+def test_infer_schema_timestamp_ns_to_us_aware() -> None:
+    """Tz-aware timestamp[ns] must be downcast to timestamp[us, tz=...]."""
+    ts = pa.array([1_000_000, 2_000_000], type=pa.timestamp("ns", tz="UTC"))
+    table = pa.table({"ts": ts})
+
+    schema = infer_schema(table)
+    assert schema.field("ts").type == pa.timestamp("us", tz="UTC")
+
+
+def test_infer_schema_float16() -> None:
+    """float_type='float16' must produce float16 fields."""
+    table = pa.table({"f": pa.array([1.1, 2.2], type=pa.float64())})
+    schema = infer_schema(table, float_type="float16")
+    assert schema.field("f").type == pa.float16()
+
+
+def test_infer_schema_all_null_int_column() -> None:
+    """An all-null integer column must not crash and must preserve its original type."""
+    col = pa.array([None, None, None], type=pa.int64())
+    table = pa.table({"x": col})
+
+    schema = infer_schema(table)
+    assert schema.field("x").type == pa.int64()
+
+
+def test_infer_schema_negative_integers() -> None:
+    """Negative integer columns must downcast to the smallest signed type."""
+    table = pa.table(
+        {
+            "i8": pa.array([-128, 127], type=pa.int64()),
+            "i16": pa.array([-32768, 32767], type=pa.int64()),
+            "i32": pa.array([-2_147_483_648, 2_147_483_647], type=pa.int64()),
+        }
+    )
+    schema = infer_schema(table)
+    assert schema.field("i8").type == pa.int8()
+    assert schema.field("i16").type == pa.int16()
+    assert schema.field("i32").type == pa.int32()
+
+
+def test_infer_schema_boolean_preserved() -> None:
+    """Boolean columns must pass through unchanged."""
+    table = pa.table({"flag": pa.array([True, False, True])})
+    schema = infer_schema(table)
+    assert schema.field("flag").type == pa.bool_()

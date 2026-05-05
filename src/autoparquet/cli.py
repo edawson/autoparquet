@@ -1,10 +1,22 @@
 import argparse
 import json
+import logging
 import sys
 
 import pyarrow.feather as feather
 
 from autoparquet.io import from_csv, from_excel, read_parquet, to_excel, write_parquet
+from autoparquet.utils.logger import get_logger
+
+logger = get_logger(__name__)
+
+
+def _parse_sheet(sheet: str) -> str | int:
+    """Return sheet as an integer index if possible, otherwise as a name."""
+    try:
+        return int(sheet)
+    except ValueError:
+        return sheet
 
 
 def _parse_column_encoding(encoding_str: str | None) -> dict[str, str] | None:
@@ -53,10 +65,10 @@ def csv_to_parquet(
     if not output_path:
         output_path = input_path.rsplit(".", 1)[0] + ".parquet"
 
-    print(f"Reading {input_path}...")
+    logger.info("reading %s ...", input_path)
     table = from_csv(path=input_path, delimiter=delimiter, float_type=float_type)
 
-    print(f"Writing optimized Parquet to {output_path} (compression: {compression})...")
+    logger.info("writing optimized Parquet → %s (%s)", output_path, compression)
     encodings = _parse_column_encoding(column_encoding)
     write_parquet(
         table,
@@ -66,7 +78,7 @@ def csv_to_parquet(
         float_type=float_type,
         column_encoding=encodings,
     )
-    print("Done!")
+    logger.info("done")
 
 
 def csv_to_feather(
@@ -81,17 +93,17 @@ def csv_to_feather(
     if not output_path:
         output_path = input_path.rsplit(".", 1)[0] + ".feather"
 
-    print(f"Reading {input_path}...")
+    logger.info("reading %s ...", input_path)
     table = from_csv(path=input_path, delimiter=delimiter, float_type=float_type)
 
-    print(f"Writing optimized Feather to {output_path} (compression: {compression})...")
+    logger.info("writing optimized Feather → %s (%s)", output_path, compression)
     feather.write_feather(
         table,
         output_path,
         compression=compression,
         compression_level=compression_level,
     )
-    print("Done!")
+    logger.info("done")
 
 
 def excel_to_parquet(
@@ -107,16 +119,12 @@ def excel_to_parquet(
     if not output_path:
         output_path = input_path.rsplit(".", 1)[0] + ".parquet"
 
-    # Parse sheet name (could be int or string)
-    try:
-        sheet_name: str | int = int(sheet)
-    except ValueError:
-        sheet_name = sheet
+    logger.info("reading %s (sheet: %s) ...", input_path, sheet)
+    table = from_excel(
+        path=input_path, sheet_name=_parse_sheet(sheet), float_type=float_type
+    )
 
-    print(f"Reading {input_path} (sheet: {sheet})...")
-    table = from_excel(path=input_path, sheet_name=sheet_name, float_type=float_type)
-
-    print(f"Writing optimized Parquet to {output_path} (compression: {compression})...")
+    logger.info("writing optimized Parquet → %s (%s)", output_path, compression)
     encodings = _parse_column_encoding(column_encoding)
     write_parquet(
         table,
@@ -126,7 +134,7 @@ def excel_to_parquet(
         float_type=float_type,
         column_encoding=encodings,
     )
-    print("Done!")
+    logger.info("done")
 
 
 def parquet_to_excel(
@@ -138,12 +146,12 @@ def parquet_to_excel(
     if not output_path:
         output_path = input_path.rsplit(".", 1)[0] + ".xlsx"
 
-    print(f"Reading {input_path}...")
+    logger.info("reading %s ...", input_path)
     df, _ = read_parquet(input_path, engine="pandas")
 
-    print(f"Writing Excel to {output_path} (sheet: {sheet})...")
+    logger.info("writing Excel → %s (sheet: %s)", output_path, sheet)
     to_excel(df, output_path, sheet_name=sheet)
-    print("Done!")
+    logger.info("done")
 
 
 def excel_to_feather(
@@ -158,26 +166,28 @@ def excel_to_feather(
     if not output_path:
         output_path = input_path.rsplit(".", 1)[0] + ".feather"
 
-    # Parse sheet name (could be int or string)
-    try:
-        sheet_name: str | int = int(sheet)
-    except ValueError:
-        sheet_name = sheet
+    logger.info("reading %s (sheet: %s) ...", input_path, sheet)
+    table = from_excel(
+        path=input_path, sheet_name=_parse_sheet(sheet), float_type=float_type
+    )
 
-    print(f"Reading {input_path} (sheet: {sheet})...")
-    table = from_excel(path=input_path, sheet_name=sheet_name, float_type=float_type)
-
-    print(f"Writing optimized Feather to {output_path} (compression: {compression})...")
+    logger.info("writing optimized Feather → %s (%s)", output_path, compression)
     feather.write_feather(
         table,
         output_path,
         compression=compression,
         compression_level=compression_level,
     )
-    print("Done!")
+    logger.info("done")
 
 
 def main() -> None:
+    logging.basicConfig(
+        level=logging.INFO,
+        format="%(asctime)s [%(levelname)-8s] %(name)s: %(message)s",
+        datefmt="%Y-%m-%d %H:%M:%S",
+    )
+
     parser = argparse.ArgumentParser(
         description="AutoParquet CLI: Optimize your data storage with Arrow and "
         "Parquet."
@@ -231,9 +241,7 @@ def main() -> None:
 
     # Parquet to Excel arguments (simpler, no compression)
     parquet_to_excel_parser = argparse.ArgumentParser(add_help=False)
-    parquet_to_excel_parser.add_argument(
-        "input", help="Path to the input Parquet file"
-    )
+    parquet_to_excel_parser.add_argument("input", help="Path to the input Parquet file")
     parquet_to_excel_parser.add_argument(
         "-o", "--output", help="Path to the output Excel file"
     )
@@ -327,7 +335,7 @@ def main() -> None:
         elif args.command == "parquet_to_excel":
             parquet_to_excel(args.input, args.output, args.sheet)
     except Exception as e:
-        print(f"Error: {e}", file=sys.stderr)
+        logger.error("%s", e)
         sys.exit(1)
 
 
